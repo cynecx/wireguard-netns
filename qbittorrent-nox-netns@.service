@@ -1,0 +1,15 @@
+[Unit]
+Description=qbittorrent-nox Daemon (wg0)
+Documentation=https://github.com/qbittorrent/qBittorrent/wiki
+BindsTo=netns-wireguard@ctwg0.service
+After=netns-wireguard@ctwg0.service
+JoinsNamespaceOf=netns@ctwg0.service
+
+[Service]
+User=%i
+Type=forking
+ExecStart=/usr/bin/qbittorrent-nox --daemon
+PrivateNetwork=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=WireGuard service for netns %I
+
+BindsTo=netns@%i.service
+After=netns@%i.service network.target network-online.target
+
+[Install]
+WantedBy=network-online.target
+WantedBy=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/default/netns-%I
+
+ExecStart=/usr/bin/env wireguard-nsinit up %I
+ExecStop=/usr/bin/env wireguard-nsinit down %I
+ExecStopPost=/usr/bin/env wireguard-nsinit cleanup %I
