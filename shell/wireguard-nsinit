@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+set -e -o pipefail
+shopt -s extglob
+export LC_ALL=C
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+export PATH="${SELF%/*}:$PATH"
+
+CONTAINER=""
+INTER_HOSTIF=""
+INTER_CONTIF=""
+
+WG_CONFIG=""
+INTERFACE=""
+ADDRESSES=( )
+MTU=""
+DNS=( )
+TABLE=""
+PRE_UP=( )
+POST_UP=( )
+PRE_DOWN=( )
+POST_DOWN=( )
+SAVE_CONFIG=0
+CONFIG_FILE=""
+PROGRAM="${0##*/}"
+ARGS=( "$@" )
+
+die() {
+	echo "$PROGRAM: $*" >&2
+	exit 1
+}
+
+# from https://github.com/WireGuard/WireGuard/blob/master/src/tools/wg-quick/linux.bash
+parse_options() {
+	local interface_section=0 line key value stripped
+	CONFIG_FILE="$1"
+	[[ $CONFIG_FILE =~ ^[a-zA-Z0-9_=+.-]{1,15}$ ]] && CONFIG_FILE="/etc/wireguard/$CONFIG_FILE.conf"
+	[[ -e $CONFIG_FILE ]] || die "\`$CONFIG_FILE' does not exist"
+	[[ $CONFIG_FILE =~ (^|/)([a-zA-Z0-9_=+.-]{1,15})\.conf$ ]] || die "The config file must be a valid interface name, followed by .conf"
+	CONFIG_FILE="$(readlink -f "$CONFIG_FILE")"
+	((($(stat -c '0%#a' "$CONFIG_FILE") & $(stat -c '0%#a' "${CONFIG_FILE%/*}") & 0007) == 0)) || echo "Warning: \`$CONFIG_FILE' is world accessible" >&2
+	INTERFACE="${BASH_REMATCH[2]}"
+	shopt -s nocasematch
+	while read -r line || [[ -n $line ]]; do
+		stripped="${line%%\#*}"
+		key="${stripped%%=*}"; key="${key##*([[:space:]])}"; key="${key%%*([[:space:]])}"
+		value="${stripped#*=}"; value="${value##*([[:space:]])}"; value="${value%%*([[:space:]])}"
+		[[ $key == "["* ]] && interface_section=0
+		[[ $key == "[Interface]" ]] && interface_section=1
+		if [[ $interface_section -eq 1 ]]; then
+			case "$key" in
+			Address) ADDRESSES+=( ${value//,/ } ); continue ;;
+			MTU) MTU="$value"; continue ;;
+			DNS) DNS+=( ${value//,/ } ); continue ;;
+			Table) TABLE="$value"; continue ;;
+			PreUp) PRE_UP+=( "$value" ); continue ;;
+			PreDown) PRE_DOWN+=( "$value" ); continue ;;
+			PostUp) POST_UP+=( "$value" ); continue ;;
+			PostDown) POST_DOWN+=( "$value" ); continue ;;
+			SaveConfig) read_bool SAVE_CONFIG "$value"; continue ;;
+			esac
+		fi
+		WG_CONFIG+="$line"$'\n'
+	done < "$CONFIG_FILE"
+	shopt -u nocasematch
+
+	INTERFACE="ns${INTERFACE}"
+	INTER_HOSTIF="veth_m$CONTAINER"
+	INTER_CONTIF="veth_s$CONTAINER"
+}
+
+cmd_up() {
+	ip netns add "$CONTAINER"
+
+	ip link add "$INTERFACE" type wireguard
+	ip link set "$INTERFACE" netns "$CONTAINER"
+
+	for i in "${ADDRESSES[@]}"; do
+		ip -n "$CONTAINER" addr add "$i" dev "$INTERFACE"
+	done;
+
+	ip netns exec "$CONTAINER" wg setconf "$INTERFACE" <(echo "$WG_CONFIG")
+
+	ip -n "$CONTAINER" link set "$INTERFACE" mtu 1420 up
+	ip -n "$CONTAINER" route add default dev "$INTERFACE"
+
+	ip link add "$INTER_HOSTIF" type veth peer name "$INTER_CONTIF"
+	ip link set "$INTER_CONTIF" netns "$CONTAINER"
+
+	ip addr add "$INTER_IP_HOST" dev "$INTER_HOSTIF"
+	ip -n "$CONTAINER" addr add "$INTER_IP_CONT" dev "$INTER_CONTIF"
+
+	ip link set "$INTER_HOSTIF" up
+	ip -n "$CONTAINER" link set "$INTER_CONTIF" up
+
+	ip route add "$INTER_GATEWAY" dev "$INTER_HOSTIF"
+	ip -n "$CONTAINER" route add "$INTER_GATEWAY" dev "$INTER_CONTIF"
+}
+
+cmd_down() {
+	ip netns delete "$CONTAINER"
+}
+
+cmd_cleanup() {
+	set +e +o pipefail
+	cmd_down
+	set -e -o pipefail
+}
+
+auto_su() {
+	[[ $UID == 0 ]] || exec sudo -E -p "$PROGRAM must be run as root. Please enter the password for %u to continue: " -- "$BASH" -- "$SELF" "${ARGS[@]}"
+}
+
+auto_su
+
+if [[ ! $# -eq 2 ]]; then
+	die 'invalid number of arguments'
+fi;
+
+CMD="$1"
+CONTAINER="$2"
+
+if [[ -z "$WIREGUARD_CONF" ]] || [[ -z "$INTER_GATEWAY" ]] || [[ -z "$INTER_IP_HOST" ]] || [[ -z "$INTER_IP_CONT" ]]; then
+	die 'wireguard config not specified'
+fi;
+
+if [[ -z "$CONTAINER" ]]; then
+	die 'container not specified'
+fi;
+
+parse_options "$WIREGUARD_CONF"
+
+if [[ $CMD == up ]]; then
+	cmd_up
+elif [[ $CMD == down ]]; then
+	cmd_down
+elif [[ $CMD == cleanup ]]; then
+	cmd_cleanup
+else
+	exit 1
+fi;
+
