@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-SELF="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-
-exec ip netns exec ctwg0 "${SELF}/spawn-uts-shell"

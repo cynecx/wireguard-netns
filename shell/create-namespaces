@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+SELF="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+NS_DIR="${SELF}/namespaces"
+NS_UTS="${NS_DIR}/ns-uts"
+NS_MOUNT="${NS_DIR}/ns-mount"
+
+if [ ! -d "$NS_DIR" ]; then
+    mkdir "$NS_DIR"
+    mount --bind "$NS_DIR" "$NS_DIR"
+    mount --make-private "$NS_DIR"
+fi	 
+
+if [ ! -f "$NS_UTS" ]; then
+    touch "$NS_UTS"
+else
+    if mount | grep -q "$NS_UTS"; then
+        umount "$NS_UTS"
+    fi
+fi
+
+if [ ! -f "$NS_MOUNT" ]; then
+    touch "$NS_MOUNT"
+else
+    if mount | grep -q "$NS_MOUNT"; then
+        umount "$NS_MOUNT"
+    fi
+fi
+
+unshare --uts="$NS_UTS" --mount="$NS_MOUNT" "${SELF}/prepare-namespaces"
+

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+SELF="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+NS_DIR="${SELF}/namespaces"
+NS_UTS="${NS_DIR}/ns-uts"
+NS_MOUNT="${NS_DIR}/ns-mount"
+
+exec nsenter --uts="$NS_UTS" --mount="$NS_MOUNT" --net=/var/run/netns/ctwg0 sudo -iu cynecx 
